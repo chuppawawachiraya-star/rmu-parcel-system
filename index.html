@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบติดตามและจัดการพัสดุ มรภ.มหาสารคาม (RMU Tracking System)</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- HTML5 QR Code Scanner Library -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <!-- สร้าง QR Code ในเครื่อง (ไม่ส่ง PIN ไปเว็บภายนอก) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- กราฟสำหรับหน้ารายงาน -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+
+  <!-- Font Kanit -->
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    body { font-family: 'Kanit', sans-serif; }
+    .tab-active {
+      border-bottom: 3px solid #d97706;
+      color: #b45309;
+      font-weight: 600;
+    }
+    #qr-reader video { border-radius: 0.75rem; object-fit: cover; }
+    .stat-card.is-active { outline: 2px solid #d97706; outline-offset: 2px; }
+    .row-tool { color: #475569; }
+    .row-tool:hover { color: #b45309; text-decoration: underline; }
+
+    /* ใบนำส่งพัสดุ (แสดงเฉพาะตอนพิมพ์) */
+    #printArea { display: none; }
+    .print-table { border-collapse: collapse; width: 100%; font-size: 10.5pt; }
+    .print-table th, .print-table td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
+    .print-table th { background: #e5e7eb; }
+    @media print {
+      @page { size: A4; margin: 15mm; }
+      body { background: white !important; }
+      body > *:not(#printArea) { display: none !important; }
+      #printArea { display: block !important; color: #000; }
+      .print-page { page-break-after: always; }
+      .print-page:last-child { page-break-after: auto; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+  <!-- Header -->
+  <header class="bg-amber-800 text-white shadow-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl">📦</span>
+        <div>
+          <h1 class="text-lg md:text-xl font-bold leading-tight">ระบบจัดส่งและติดตามพัสดุ มรภ.มหาสารคาม</h1>
+          <p class="text-xs text-amber-200">RMU Parcel Tracking & Campus Delivery System</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3 text-xs">
+        <span id="backendStatusBadge" class="hidden sm:flex px-2.5 py-1 rounded-full bg-slate-800/60 text-slate-200 border border-slate-600 items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+          กำลังตรวจสอบ Server...
+        </span>
+
+        <!-- ปุ่ม Login / ข้อมูลเจ้าหน้าที่ -->
+        <div id="authHeaderArea">
+          <button onclick="openLoginModal()" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg border border-amber-500 font-medium flex items-center gap-1.5 transition shadow-sm">
+            <span>🔐</span> เข้าสู่ระบบเจ้าหน้าที่
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="bg-white border-b border-slate-200 shadow-sm sticky top-[57px] z-40">
+    <div class="max-w-6xl mx-auto px-4 flex gap-6 text-sm font-medium overflow-x-auto">
+      <button onclick="switchTab('search')" id="tab-search" class="py-3.5 px-2 tab-active transition-all flex items-center gap-2 whitespace-nowrap">
+        <span>🔍</span> ค้นหาพัสดุ & จุดรับ
+      </button>
+      <button onclick="switchTab('staff')" id="tab-staff" class="py-3.5 px-2 text-slate-600 hover:text-amber-800 transition-all flex items-center gap-2 whitespace-nowrap">
+        <span>✍️</span> ลงทะเบียนรับพัสดุเข้า
+        <span id="lockIcon-staff" class="text-xs text-amber-600">🔒</span>
+      </button>
+      <button onclick="switchTab('dashboard')" id="tab-dashboard" class="py-3.5 px-2 text-slate-600 hover:text-amber-800 transition-all flex items-center gap-2 whitespace-nowrap">
+        <span>🚚</span> จัดส่ง & ยืนยันการรับ
+        <span id="lockIcon-dashboard" class="text-xs text-amber-600">🔒</span>
+      </button>
+      <button onclick="switchTab('reports')" id="tab-reports" class="py-3.5 px-2 text-slate-600 hover:text-amber-800 transition-all flex items-center gap-2 whitespace-nowrap">
+        <span>📊</span> รายงานสรุป
+        <span id="lockIcon-reports" class="text-xs text-amber-600">🔒</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Content Container -->
+  <main class="max-w-6xl mx-auto px-4 py-6">
+
+    <!-- ================= TAB 1: ค้นหาและติดตามพัสดุ ================= -->
+    <section id="view-search" class="space-y-6">
+      <div class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 text-center max-w-2xl mx-auto">
+        <h2 class="text-2xl font-bold text-slate-800 mb-2">เช็กสถานะพัสดุและจุดรับใน มรภ.มหาสารคาม</h2>
+        <p class="text-sm text-slate-500 mb-6">กรอกเลข Tracking หรือ รหัสนักศึกษา/บุคลากร แบบเต็ม เพื่อดูสถานะและอาคารจุดรับพัสดุ</p>
+
+        <form id="searchForm" onsubmit="event.preventDefault(); handleSearch();" class="flex flex-col sm:flex-row gap-2">
+          <input type="search" id="searchInput" name="parcel-search-query" autocomplete="off" placeholder="เช่น TH123456789 หรือ 663121070106" required
+            class="flex-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none text-base">
+          <button type="submit"
+            class="bg-amber-600 hover:bg-amber-700 text-white font-medium px-6 py-3 rounded-xl transition duration-200 flex items-center justify-center gap-2 shadow-sm">
+            <span>🔍</span> ค้นหาพัสดุ
+          </button>
+        </form>
+      </div>
+
+      <!-- รับแจ้งเตือนทาง LINE ถึงเจ้าของโดยตรง (แสดงเมื่อตั้งค่า LINE_BOT_BASIC_ID แล้ว) -->
+      <div id="lineNotifyCard" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-green-200 max-w-2xl mx-auto">
+        <div class="flex flex-col sm:flex-row items-center gap-5">
+          <div id="lineBotQr" class="shrink-0 bg-white p-2 rounded-xl border border-green-200"></div>
+          <div class="space-y-2 text-center sm:text-left">
+            <p class="font-bold text-green-700">💬 รับแจ้งเตือนพัสดุทาง LINE ถึงคุณโดยตรง</p>
+            <ol class="text-xs text-slate-600 space-y-1 text-left">
+              <li>1) สแกน QR Code หรือกดปุ่มด้านล่างเพื่อเพิ่มเพื่อน LINE ของระบบ</li>
+              <li>2) พิมพ์<b>รหัสนักศึกษา/บุคลากร</b>ของคุณส่งในแชท (ทำครั้งเดียว)</li>
+              <li>3) เมื่อพัสดุถึง มรภ. ระบบจะแจ้งเตือน<b>เฉพาะ LINE ของคุณ</b> ไม่มีชื่อและไม่มี PIN ในข้อความ</li>
+            </ol>
+            <a id="lineAddFriendBtn" href="#" target="_blank" rel="noopener"
+              class="inline-flex items-center gap-1.5 text-sm font-medium text-white px-4 py-2 rounded-lg shadow-sm transition hover:opacity-90"
+              style="background:#06C755">+ เพิ่มเพื่อน LINE</a>
+          </div>
+        </div>
+      </div>
+
+      <div id="searchResultArea" class="hidden max-w-3xl mx-auto space-y-6"></div>
+    </section>
+
+    <!-- ================= TAB 2: ลงทะเบียนรับพัสดุเข้า ================= -->
+    <section id="view-staff" class="hidden space-y-6">
+      <div class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 max-w-2xl mx-auto">
+        <div class="flex items-center justify-between mb-6 pb-4 border-b">
+          <div>
+            <h2 class="text-xl font-bold text-slate-800">ลงทะเบียนรับพัสดุเข้าระบบ</h2>
+            <p class="text-xs text-slate-500">บันทึกพัสดุที่มาถึงศูนย์รับพัสดุกลาง และเลือกจุดรับที่จะจัดส่งให้ผู้รับ</p>
+          </div>
+          <span class="text-xs bg-amber-100 text-amber-800 font-semibold px-2.5 py-1 rounded-full">RMU Staff Only</span>
+        </div>
+
+        <form id="packageForm" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">เลข Tracking พัสดุ <span class="text-red-500">*</span></label>
+              <input type="text" id="tracking_number" required placeholder="เช่น TH123456789"
+                class="w-full px-3.5 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">บริษัทขนส่ง <span class="text-red-500">*</span></label>
+              <select id="carrier" required class="w-full px-3.5 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm bg-white">
+                <option value="ไปรษณีย์ไทย">ไปรษณีย์ไทย (Thailand Post)</option>
+                <option value="Flash Express">Flash Express</option>
+                <option value="Kerry Express">Kerry Express</option>
+                <option value="J&T Express">J&T Express</option>
+                <option value="Shopee Express">Shopee Express</option>
+                <option value="Lazada Logistics">Lazada Logistics</option>
+                <option value="อื่นๆ">อื่นๆ</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">รหัสนักศึกษา / บุคลากร <span class="text-red-500">*</span></label>
+              <input type="text" id="student_id" required placeholder="เช่น 663121070106"
+                class="w-full px-3.5 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">ชื่อ-นามสกุล ผู้รับ <span class="text-red-500">*</span></label>
+              <input type="text" id="recipient_name" required placeholder="เช่น วชิรญา ชุปวา"
+                class="w-full px-3.5 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm">
+            </div>
+          </div>
+
+          <!-- เลือกจุดรับพัสดุภายใน มรภ.มหาสารคาม -->
+          <div class="p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-2">
+            <label class="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🏫</span> จุดรับพัสดุภายใน มรภ.มหาสารคาม <span class="text-red-500">*</span>
+            </label>
+            <select id="storage_location" required class="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white font-medium text-amber-900 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+              <optgroup label="ศูนย์รับพัสดุหลัก">
+                <option value="R2 - อาคารพัสดุ (ศูนย์รับพัสดุกลาง)" selected>R2 - อาคารพัสดุ (ศูนย์รับพัสดุกลาง)</option>
+              </optgroup>
+              <optgroup label="คณะ / อาคารเรียน">
+                <option value="อาคาร 1 - คณะครุศาสตร์">อาคาร 1 - คณะครุศาสตร์</option>
+                <option value="อาคาร 3 - คณะมนุษยศาสตร์และสังคมศาสตร์">อาคาร 3 - คณะมนุษยศาสตร์และสังคมศาสตร์</option>
+                <option value="อาคาร 6 - คณะวิทยาศาสตร์และเทคโนโลยี">อาคาร 6 - คณะวิทยาศาสตร์และเทคโนโลยี</option>
+                <option value="อาคาร 12 - คณะเทคโนโลยีอุตสาหกรรม">อาคาร 12 - คณะเทคโนโลยีอุตสาหกรรม</option>
+                <option value="อาคาร 15 - อาคารเฉลิมพระเกียรติ 72 พรรษา">อาคาร 15 - อาคารเฉลิมพระเกียรติ 72 พรรษา</option>
+                <option value="อาคาร 16 - สำนักวิทยบริการและเทคโนโลยีสารสนเทศ (หอสมุด)">อาคาร 16 - สำนักวิทยบริการฯ (หอสมุด)</option>
+                <option value="อาคาร 18 - คณะเทคโนโลยีการเกษตร">อาคาร 18 - คณะเทคโนโลยีการเกษตร</option>
+                <option value="อาคาร 19 - คณะวิศวกรรมศาสตร์">อาคาร 19 - คณะวิศวกรรมศาสตร์</option>
+                <option value="อาคาร 31 - อาคารหอประชุมเฉลิมพระเกียรติ 80 พรรษา">อาคาร 31 - หอประชุมเฉลิมพระเกียรติ 80 พรรษา</option>
+                <option value="อาคาร 33 - คณะนิติศาสตร์">อาคาร 33 - คณะนิติศาสตร์</option>
+                <option value="อาคาร 34 - คณะวิทยาการจัดการ">อาคาร 34 - คณะวิทยาการจัดการ</option>
+                <option value="อาคาร 38 - คณะเทคโนโลยีสารสนเทศ">อาคาร 38 - คณะเทคโนโลยีสารสนเทศ</option>
+              </optgroup>
+              <optgroup label="หอพัก / ศูนย์บริการ">
+                <option value="J - อาคารหอพักนักศึกษา (RMU Dormitory)">J - อาคารหอพักนักศึกษา (RMU Dormitory)</option>
+                <option value="G - อาคารโรงอาหาร">G - อาคารโรงอาหาร</option>
+                <option value="RMU Market - ตลาด มรภ.มหาสารคาม">RMU Market - ตลาด มรภ.มหาสารคาม</option>
+                <option value="M - ป้อมรักษาความปลอดภัย (ประตูทางเข้า)">M - ป้อมรักษาความปลอดภัย (ประตูทางเข้า)</option>
+              </optgroup>
+            </select>
+            <p class="text-[11px] text-slate-500">สถานะเริ่มต้นจะเป็น "รับเข้าแล้ว" เมื่อนำพัสดุไปส่งยังจุดรับ ให้กด "จัดส่งไปจุดรับ" ในแท็บถัดไป</p>
+          </div>
+
+          <button type="submit" id="submitBtn"
+            class="w-full bg-amber-700 hover:bg-amber-800 text-white font-medium py-3 rounded-xl shadow transition duration-200 text-base">
+            + บันทึกรับพัสดุเข้าสู่ระบบ (สุ่มสร้าง PIN)
+          </button>
+        </form>
+
+        <div id="statusMessage" class="mt-4 text-center font-medium text-sm hidden p-3 rounded-xl"></div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 3: จัดส่ง & ยืนยันการรับ ================= -->
+    <section id="view-dashboard" class="hidden space-y-4">
+
+      <!-- การ์ดสรุปตัวเลข (กดเพื่อกรองตาราง) -->
+      <div id="statsCards" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
+
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h2 class="text-lg font-bold text-slate-800">🚚 จัดส่งพัสดุและยืนยันการรับ</h2>
+            <p class="text-xs text-slate-500">รับเข้าแล้ว → กด "จัดส่งไปจุดรับ" → ผู้รับแสดง PIN/QR → ส่งสำเร็จ</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button onclick="openPrintModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-medium flex items-center gap-1.5 shadow-sm transition">
+              <span>🖨️</span> พิมพ์ใบนำส่ง
+            </button>
+            <button onclick="openQrScannerModal()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-medium flex items-center gap-1.5 shadow-sm transition">
+              <span>📷</span> สแกน QR Code รับพัสดุ
+            </button>
+            <button onclick="fetchPackages()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center gap-1">
+              🔄 รีเฟรช
+            </button>
+          </div>
+        </div>
+
+        <!-- แถบค้นหาและกรอง -->
+        <div class="flex flex-col md:flex-row gap-2">
+          <input type="search" id="tableSearch" name="table-filter-query" autocomplete="off" data-lpignore="true" oninput="applyFilters()" placeholder="ค้นหาเลข Tracking / ชื่อผู้รับ / รหัส"
+            class="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none">
+          <select id="statusFilter" onchange="applyFilters()"
+            class="px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            <option value="ALL">ทุกสถานะ</option>
+            <option value="TODAY">รับเข้าวันนี้</option>
+            <option value="ARRIVED_AT_RMU">รับเข้าแล้ว (รอจัดส่ง)</option>
+            <option value="IN_TRANSIT">กำลังจัดส่ง</option>
+            <option value="WAITING">ยังไม่ส่งสำเร็จทั้งหมด</option>
+            <option value="OVERDUE">ค้างเกิน 7 วัน</option>
+            <option value="DELIVERED">ส่งสำเร็จ</option>
+          </select>
+          <select id="locationFilter" onchange="applyFilters()"
+            class="px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none md:max-w-[240px]">
+            <option value="ALL">ทุกจุดรับ</option>
+          </select>
+        </div>
+        <p id="tableCountText" class="text-[11px] text-slate-500"></p>
+
+        <!-- Data Table -->
+        <div class="overflow-x-auto rounded-xl border border-slate-200">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b text-slate-600 font-medium">
+                <th class="p-3">เลข Tracking / ขนส่ง</th>
+                <th class="p-3">ผู้รับ (รหัส)</th>
+                <th class="p-3">จุดรับพัสดุ</th>
+                <th class="p-3">รับเข้าเมื่อ</th>
+                <th class="p-3">สถานะ</th>
+                <th class="p-3 text-center">ดำเนินการ</th>
+              </tr>
+            </thead>
+            <tbody id="packageTableBody" class="divide-y divide-slate-100">
+              <tr>
+                <td colspan="6" class="text-center p-6 text-slate-400">กำลังโหลดข้อมูล...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= TAB 4: รายงานสรุปและสถิติ ================= -->
+    <section id="view-reports" class="hidden space-y-4">
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+        <div>
+          <h2 class="text-lg font-bold text-slate-800">📊 รายงานสรุปและสถิติพัสดุ</h2>
+          <p class="text-xs text-slate-500">ปริมาณพัสดุในแต่ละช่วงเวลา แยกตามจุดรับและบริษัทขนส่ง สำหรับวางแผนและพัฒนาระบบ</p>
+        </div>
+
+        <div class="flex flex-col lg:flex-row lg:items-end gap-3">
+          <div class="flex flex-wrap items-end gap-2">
+            <div>
+              <label class="block text-[11px] text-slate-500 mb-1">ตั้งแต่วันที่</label>
+              <input type="date" id="reportFrom" class="px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-500 mb-1">ถึงวันที่</label>
+              <input type="date" id="reportTo" class="px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            </div>
+            <button onclick="loadReport()" class="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-medium shadow-sm transition">
+              แสดงรายงาน
+            </button>
+          </div>
+
+          <div class="flex flex-wrap gap-2 lg:ml-auto">
+            <button onclick="setReportPreset(7)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs">7 วันล่าสุด</button>
+            <button onclick="setReportPreset(30)" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs">30 วันล่าสุด</button>
+            <button onclick="setReportPreset('month')" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs">เดือนนี้</button>
+            <button onclick="exportReportCsv()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
+              ⬇️ Export CSV (เปิดใน Excel)
+            </button>
+          </div>
+        </div>
+
+        <p id="reportMessage" class="hidden text-xs font-medium p-3 rounded-lg"></p>
+      </div>
+
+      <div id="reportSummary" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
+          <h3 class="text-sm font-bold text-slate-800 mb-3">📈 ปริมาณพัสดุรายวัน (รับเข้า / ส่งสำเร็จ)</h3>
+          <div class="relative h-64"><canvas id="chartDaily"></canvas></div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+          <h3 class="text-sm font-bold text-slate-800 mb-3">🕒 ช่วงเวลาที่รับพัสดุเข้า (รายชั่วโมง)</h3>
+          <div class="relative h-64"><canvas id="chartHour"></canvas></div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+          <h3 class="text-sm font-bold text-slate-800 mb-3">🚛 สัดส่วนตามบริษัทขนส่ง</h3>
+          <div class="relative h-64"><canvas id="chartCarrier"></canvas></div>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 md:col-span-2 space-y-4">
+          <h3 class="text-sm font-bold text-slate-800">🏫 พัสดุแยกตามจุดรับ / หน่วยงาน</h3>
+          <div class="relative h-72"><canvas id="chartLocation"></canvas></div>
+          <div class="overflow-x-auto rounded-xl border border-slate-200">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="bg-slate-50 border-b text-slate-600 font-medium">
+                  <th class="p-3">จุดรับพัสดุ</th>
+                  <th class="p-3 text-right">ทั้งหมด</th>
+                  <th class="p-3 text-right">ยังไม่ส่งสำเร็จ</th>
+                  <th class="p-3 text-right">ส่งสำเร็จ</th>
+                  <th class="p-3 text-right">เวลารอรับเฉลี่ย</th>
+                </tr>
+              </thead>
+              <tbody id="reportLocationTable" class="divide-y divide-slate-100">
+                <tr><td colspan="5" class="text-center p-6 text-slate-400">ยังไม่มีข้อมูล</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= MODAL: Login เจ้าหน้าที่ ================= -->
+  <div id="loginModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4 relative">
+      <div class="text-center">
+        <span class="text-4xl">🔐</span>
+        <h3 class="text-xl font-bold text-slate-800 mt-2">เข้าสู่ระบบเจ้าหน้าที่</h3>
+        <p class="text-xs text-slate-500 mt-1">RMU Parcel Staff Authentication</p>
+      </div>
+
+      <form onsubmit="event.preventDefault(); handleStaffLogin();" class="space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">ชื่อผู้ใช้งาน (Username)</label>
+          <input type="text" id="loginUsername" required placeholder="ชื่อผู้ใช้"
+            class="w-full px-3.5 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-700 mb-1">รหัสผ่าน (Password)</label>
+          <input type="password" id="loginPassword" required placeholder="••••"
+            class="w-full px-3.5 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none text-sm">
+        </div>
+
+        <div id="loginErrorMsg" class="text-xs text-red-600 text-center font-medium hidden"></div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeLoginModal()" class="w-1/2 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl">ยกเลิก</button>
+          <button type="submit" class="w-1/2 py-2.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-medium rounded-xl shadow-sm">เข้าสู่ระบบ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: สแกน QR Code ผ่านกล้อง ================= -->
+  <div id="qrScanModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 relative">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <span>📷</span> สแกน QR Code รับพัสดุ
+        </h3>
+        <button onclick="closeQrScannerModal()" class="text-slate-400 hover:text-slate-600 text-2xl font-bold leading-none">&times;</button>
+      </div>
+
+      <div id="qr-reader" class="w-full overflow-hidden border border-slate-200 rounded-xl bg-black min-h-[250px]"></div>
+
+      <div id="scanFeedback" class="text-xs text-center text-slate-500">
+        ส่องกล้องไปที่ QR Code บนหน้าจอมือถือของผู้รับ เพื่อยืนยันการส่งมอบพัสดุ
+      </div>
+
+      <button onclick="closeQrScannerModal()" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl">
+        ปิดหน้าต่างสแกน
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: ยืนยันรหัส PIN ================= -->
+  <div id="pinModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-slate-100 space-y-4">
+      <div class="text-center">
+        <span class="text-4xl">🔑</span>
+        <h3 class="text-lg font-bold text-slate-800 mt-2">ยืนยันตัวตนรับพัสดุ</h3>
+        <p class="text-xs text-slate-500 mt-1">กรอกรหัส PIN 4 หลักที่ผู้รับแสดงจากระบบ</p>
+      </div>
+
+      <input type="password" id="inputPinCode" maxlength="4" placeholder="----" autofocus
+        class="w-full text-center text-3xl tracking-[0.5em] font-bold py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none">
+
+      <div id="pinErrorMessage" class="text-xs text-red-600 text-center font-medium hidden"></div>
+
+      <button type="button" onclick="openManualDeliveryFromPin()" class="w-full text-[11px] text-blue-700 hover:underline">
+        ผู้รับไม่มี PIN / QR Code? ยืนยันด้วยการตรวจบัตรแทน
+      </button>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closePinModal()" class="w-1/2 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl">ยกเลิก</button>
+        <button onclick="submitVerifyPin()" class="w-1/2 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium rounded-xl shadow-sm">ยืนยันรหัส</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: ใช้ร่วมกัน (ประวัติ / แก้ไข / ยกเลิก / ตรวจบัตร / พิมพ์) ================= -->
+  <div id="genericModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-100 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 id="genericModalTitle" class="text-lg font-bold text-slate-800"></h3>
+        <button onclick="closeGenericModal()" class="text-slate-400 hover:text-slate-600 text-2xl font-bold leading-none">&times;</button>
+      </div>
+      <div id="genericModalBody" class="space-y-3 text-sm"></div>
+      <p id="genericModalError" class="text-xs text-red-600 font-medium hidden"></p>
+      <div id="genericModalActions" class="flex justify-end gap-2 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- พื้นที่สำหรับพิมพ์ใบนำส่ง -->
+  <div id="printArea"></div>
+
+  <script>
+    // ================= Configuration & State =================
+    // เปิดผ่าน http://127.0.0.1:5000 จะใช้ server เดียวกัน / ถ้าเปิดเป็นไฟล์ตรงจะชี้ไปที่ server ในเครื่อง
+    const BACKEND_API = location.protocol.startsWith('http') ? `${location.origin}/api` : 'http://127.0.0.1:5000/api';
+    const OVERDUE_DAYS = 7; // พัสดุค้างเกินกี่วันถือว่า "ค้างนาน"
+    // ⚠️ ใส่ Basic ID ของบอท LINE (ขึ้นต้นด้วย @ ดูได้จาก LINE Developers แท็บ Messaging API หัวข้อ Bot basic ID)
+    // ถ้าเว้นว่างไว้ การ์ด "รับแจ้งเตือนทาง LINE" จะไม่แสดง
+    const LINE_BOT_BASIC_ID = '@127xmurk';
+    const STAFF_TABS = ['staff', 'dashboard', 'reports'];
+    let allPackagesList = [];
+    let currentSelectedPackageId = null;
+    let html5QrScanner = null;
+    let reportCharts = {};
+    let currentUser = JSON.parse(sessionStorage.getItem('rmu_staff_user') || 'null');
+    let authToken = sessionStorage.getItem('rmu_staff_token');
+
+    // สถานะ 3 ขั้น ตามขอบเขตโครงการ: รับเข้า → กำลังจัดส่ง → ส่งสำเร็จ
+    const STATUS_MAP = {
+      'ARRIVED_AT_RMU': { label: '📥 รับเข้าแล้ว', color: 'bg-amber-100 text-amber-800 border-amber-300' },
+      'IN_TRANSIT':     { label: '🚚 กำลังจัดส่ง', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+      'DELIVERED':      { label: '✅ ส่งสำเร็จ', color: 'bg-green-100 text-green-700 border-green-200' }
+    };
+
+    // ================= ข้อมูลจุดรับพัสดุ =================
+    // ⚠️ เวลาเปิด-ปิดด้านล่างเป็นค่าตัวอย่าง แก้ให้ตรงกับเวลาจริงของแต่ละจุดก่อนนำเสนอ
+    // key = รหัสหน้าชื่อจุดรับ (ส่วนก่อน " - ") เช่น "R2", "อาคาร 38", "J"
+    const DEFAULT_LOCATION_INFO = {
+      hours: 'จ.–ศ. 08:30–16:30 น. (เว้นวันหยุดราชการ)',
+      note: 'นำบัตรนักศึกษา/บัตรประชาชน และ PIN หรือ QR Code มาแสดงต่อเจ้าหน้าที่'
+    };
+    const LOCATION_INFO = {
+      // ตัวอย่างการกำหนดเฉพาะจุด:
+      // 'J': { hours: 'ทุกวัน 08:00–20:00 น.', note: 'ติดต่อเคาน์เตอร์หอพักชั้น 1' },
+    };
+
+    function getLocationInfo(locationName) {
+      const code = String(locationName || '').split(' - ')[0].trim();
+      return { ...DEFAULT_LOCATION_INFO, ...(LOCATION_INFO[code] || {}) };
+    }
+
+    // ================= ตัวช่วยทั่วไป =================
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function authHeaders(extra = {}) {
+      return authToken ? { ...extra, 'Authorization': `Bearer ${authToken}` } : extra;
+    }
+
+    function normalizeCode(v) {
+      return String(v ?? '').replace(/\s+/g, '').toLowerCase();
+    }
+
+    // ================= ตัวช่วยเรื่องวันเวลา =================
+    function parseDate(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    function getArrivedAt(pkg) { return parseDate(pkg.created_at); }
+    function getDispatchedAt(pkg) { return parseDate(pkg.dispatched_at); }
+    function getDeliveredAt(pkg) { return parseDate(pkg.delivered_at); }
+    function getStatusCode(pkg) {
+      return STATUS_MAP[pkg.shipping_status] ? pkg.shipping_status : 'ARRIVED_AT_RMU';
+    }
+    function isDelivered(pkg) { return getStatusCode(pkg) === 'DELIVERED'; }
+    function daysSince(date) {
+      if (!date) return null;
+      return Math.floor((Date.now() - date.getTime()) / 86400000);
+    }
+    function isOverdue(pkg) {
+      if (isDelivered(pkg)) return false;
+      const days = daysSince(getArrivedAt(pkg));
+      return days !== null && days >= OVERDUE_DAYS;
+    }
+    function isToday(date) {
+      return !!date && date.toDateString() === new Date().toDateString();
+    }
+    function formatDateTime(date) {
+      if (!date) return '-';
+      return date.toLocaleString('th-TH', {
+        day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit'
+      }) + ' น.';
+    }
+    function toDateInputValue(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    function formatHours(h) {
+      if (h === null || h === undefined) return '-';
+      return h < 24 ? `${h.toFixed(1)} ชม.` : `${(h / 24).toFixed(1)} วัน`;
+    }
+
+    // ================= การ์ดรับแจ้งเตือนทาง LINE =================
+    function setupLineCard() {
+      const id = LINE_BOT_BASIC_ID.trim();
+      if (!id) return;
+      const url = `https://line.me/R/ti/p/${encodeURIComponent(id.startsWith('@') ? id : '@' + id)}`;
+      document.getElementById('lineAddFriendBtn').href = url;
+      try {
+        new QRCode(document.getElementById('lineBotQr'), { text: url, width: 110, height: 110 });
+      } catch (e) {
+        document.getElementById('lineBotQr').classList.add('hidden');
+      }
+      document.getElementById('lineNotifyCard').classList.remove('hidden');
+    }
+
+    // ================= สถานะการเชื่อมต่อ Server =================
+    function setServerStatus(online) {
+      const badge = document.getElementById('backendStatusBadge');
+      badge.className = online
+        ? 'hidden sm:flex px-2.5 py-1 rounded-full bg-emerald-900/60 text-emerald-200 border border-emerald-700 items-center gap-1.5'
+        : 'hidden sm:flex px-2.5 py-1 rounded-full bg-red-900/70 text-red-100 border border-red-500 items-center gap-1.5';
+      badge.innerHTML = online
+        ? '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Server พร้อมใช้งาน'
+        : '<span class="w-2 h-2 rounded-full bg-red-400"></span> ไม่ได้เชื่อมต่อ Server';
+    }
+
+    async function checkServer() {
+      try {
+        const res = await fetch(`${BACKEND_API}/health`, { cache: 'no-store' });
+        setServerStatus(res.ok);
+      } catch (err) {
+        setServerStatus(false);
+      }
+    }
+
+    function serverDownAlert(extra = '') {
+      setServerStatus(false);
+      alert(`❌ ไม่สามารถเชื่อมต่อ Server ได้${extra}\nกรุณาเปิดระบบด้วยไฟล์ start.bat แล้วลองใหม่`);
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      try { localStorage.removeItem('rmu_packages_local'); } catch (e) {} // ล้างข้อมูลโหมดออฟไลน์เวอร์ชันก่อน
+      if (currentUser && !authToken) clearSession(); // session จากโหมดออฟไลน์เดิม
+      document.getElementById('tableSearch').value = ''; // กันเบราว์เซอร์เติมชื่อผู้ใช้ลงช่องค้นหาเอง
+      setupLineCard();
+      updateAuthUI();
+      await checkServer();
+      setInterval(checkServer, 15000);
+      await fetchPackages();
+    });
+
+    // ================= Auth System Logic =================
+    function updateAuthUI() {
+      const headerArea = document.getElementById('authHeaderArea');
+
+      if (currentUser) {
+        headerArea.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="text-amber-100 text-xs hidden sm:inline">👤 เจ้าหน้าที่: <b class="text-white">${escapeHtml(currentUser.name)}</b></span>
+            <button onclick="handleLogout()" class="bg-red-700/80 hover:bg-red-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium border border-red-500 transition">
+              🚪 ออกจากระบบ
+            </button>
+          </div>
+        `;
+      } else {
+        headerArea.innerHTML = `
+          <button onclick="openLoginModal()" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg border border-amber-500 font-medium flex items-center gap-1.5 transition shadow-sm">
+            <span>🔐</span> เข้าสู่ระบบเจ้าหน้าที่
+          </button>
+        `;
+      }
+      STAFF_TABS.forEach(t => {
+        const icon = document.getElementById(`lockIcon-${t}`);
+        if (icon) icon.innerText = currentUser ? '✅' : '🔒';
+      });
+    }
+
+    function clearSession() {
+      sessionStorage.removeItem('rmu_staff_user');
+      sessionStorage.removeItem('rmu_staff_token');
+      currentUser = null;
+      authToken = null;
+      allPackagesList = [];
+      updateAuthUI();
+    }
+
+    function handleUnauthorized() {
+      clearSession();
+      switchTab('search');
+      alert('🔒 หมดเวลาเข้าสู่ระบบ กรุณาเข้าสู่ระบบใหม่');
+    }
+
+    function openLoginModal() {
+      document.getElementById('loginUsername').value = '';
+      document.getElementById('loginPassword').value = '';
+      document.getElementById('loginErrorMsg').classList.add('hidden');
+      document.getElementById('loginModal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('loginUsername').focus(), 100);
+    }
+
+    function closeLoginModal() {
+      document.getElementById('loginModal').classList.add('hidden');
+    }
+
+    async function handleStaffLogin() {
+      const userVal = document.getElementById('loginUsername').value.trim();
+      const passVal = document.getElementById('loginPassword').value;
+      const errorMsg = document.getElementById('loginErrorMsg');
+      errorMsg.classList.add('hidden');
+
+      try {
+        const res = await fetch(`${BACKEND_API}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: userVal, password: passVal })
+        });
+        const json = await res.json();
+        if (!json.success) {
+          errorMsg.innerText = json.message || '❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง!';
+          errorMsg.classList.remove('hidden');
+          return;
+        }
+        currentUser = json.user;
+        authToken = json.token;
+        sessionStorage.setItem('rmu_staff_token', authToken);
+      } catch (err) {
+        setServerStatus(false);
+        errorMsg.innerText = '❌ ไม่สามารถเชื่อมต่อ Server ได้ กรุณาเปิดระบบด้วยไฟล์ start.bat';
+        errorMsg.classList.remove('hidden');
+        return;
+      }
+
+      sessionStorage.setItem('rmu_staff_user', JSON.stringify(currentUser));
+      updateAuthUI();
+      closeLoginModal();
+      await fetchPackages();
+      alert("🎉 เข้าสู่ระบบสำเร็จ!");
+    }
+
+    function handleLogout() {
+      if (confirm("คุณต้องการออกจากระบบหรือไม่?")) {
+        if (authToken) {
+          fetch(`${BACKEND_API}/logout`, { method: 'POST', headers: authHeaders() }).catch(() => {});
+        }
+        clearSession();
+        switchTab('search');
+        alert("ออกจากระบบเรียบร้อยแล้ว");
+      }
+    }
+
+    function switchTab(tabName) {
+      if (STAFF_TABS.includes(tabName) && !currentUser) {
+        alert("🔒 กรุณาเข้าสู่ระบบเจ้าหน้าที่ก่อนใช้งานส่วนนี้");
+        openLoginModal();
+        return;
+      }
+
+      ['search', ...STAFF_TABS].forEach(t => {
+        const view = document.getElementById(`view-${t}`);
+        const tab = document.getElementById(`tab-${t}`);
+        if (t === tabName) {
+          view.classList.remove('hidden');
+          tab.classList.add('tab-active');
+          tab.classList.remove('text-slate-600');
+        } else {
+          view.classList.add('hidden');
+          tab.classList.remove('tab-active');
+          tab.classList.add('text-slate-600');
+        }
+      });
+
+      if (tabName === 'dashboard') fetchPackages();
+      if (tabName === 'reports') {
+        if (!document.getElementById('reportFrom').value) setReportPreset(30);
+        else loadReport();
+      }
+    }
+
+    // ================= Fetch Packages =================
+    async function fetchPackages() {
+      if (!currentUser) return; // คนทั่วไปไม่ต้องโหลดรายการทั้งหมด
+      try {
+        const res = await fetch(`${BACKEND_API}/packages`, { headers: authHeaders() });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        const json = await res.json();
+        if (json.success) allPackagesList = json.data;
+        setServerStatus(true);
+      } catch (err) {
+        setServerStatus(false);
+      }
+      renderDashboard();
+    }
+
+    // ================= Save Package =================
+    document.getElementById('packageForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const submitBtn = document.getElementById('submitBtn');
+      const statusMsg = document.getElementById('statusMessage');
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'กำลังบันทึกข้อมูล...';
+
+      const formData = {
+        tracking_number: document.getElementById('tracking_number').value.trim(),
+        carrier: document.getElementById('carrier').value,
+        student_id: document.getElementById('student_id').value.trim(),
+        recipient_name: document.getElementById('recipient_name').value.trim(),
+        storage_location: document.getElementById('storage_location').value
+      };
+
+      let savedPkg = null;
+
+      try {
+        const res = await fetch(`${BACKEND_API}/packages`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(formData)
+        });
+
+        if (res.status === 401) {
+          handleUnauthorized();
+        } else {
+          const json = await res.json();
+          if (json.success) {
+            savedPkg = { ...json.data, line_notification: json.line_notification };
+          } else {
+            alert(json.message || '❌ บันทึกไม่สำเร็จ');
+          }
+        }
+      } catch (err) {
+        serverDownAlert(' ข้อมูลยังไม่ถูกบันทึก');
+      }
+
+      if (savedPkg) {
+        const lineText = savedPkg.line_notification
+          ? '<br><span class="text-xs text-emerald-700">🔔 ส่งแจ้งเตือน LINE แล้ว</span>'
+          : '';
+        statusMsg.innerHTML = `✅ บันทึกรับเข้าเรียบร้อย! <br>📍 จุดรับ: <b>${escapeHtml(savedPkg.storage_location)}</b><br>🔑 รหัส PIN: <b class="text-xl text-amber-900">${escapeHtml(savedPkg.pickup_pin)}</b>${lineText}`;
+        statusMsg.className = 'mt-4 text-center font-medium text-sm text-amber-900 bg-amber-50 border border-amber-300 p-4 rounded-xl block shadow-sm';
+      }
+
+      if (savedPkg) document.getElementById('packageForm').reset(); // บันทึกไม่สำเร็จ เก็บข้อมูลที่กรอกไว้ให้ลองใหม่
+      submitBtn.disabled = false;
+      submitBtn.innerText = '+ บันทึกรับพัสดุเข้าสู่ระบบ (สุ่มสร้าง PIN)';
+      await fetchPackages();
+    });
+
+    // ================= Search =================
+    async function handleSearch() {
+      const query = normalizeCode(document.getElementById('searchInput').value);
+      const area = document.getElementById('searchResultArea');
+
+      if (!query) return;
+
+      area.classList.remove('hidden');
+
+      if (query.length < 6) {
+        area.innerHTML = `
+          <div class="bg-white p-6 rounded-2xl text-center border border-slate-200 text-sm text-slate-600">
+            กรุณากรอกเลข Tracking หรือรหัสนักศึกษา/บุคลากรให้ครบทุกตัว
+          </div>`;
+        return;
+      }
+
+      // ค้นผ่าน server แบบตรงตัว ได้ข้อมูลที่ปิดบังแล้วและไม่มี PIN
+      let matched = [];
+      try {
+        const res = await fetch(`${BACKEND_API}/packages/search?q=${encodeURIComponent(query)}`);
+        const json = await res.json();
+        matched = json.success ? json.data : [];
+      } catch (err) {
+        setServerStatus(false);
+        area.innerHTML = `
+          <div class="bg-white p-6 rounded-2xl text-center border border-red-200 text-sm text-red-700">
+            ❌ ไม่สามารถเชื่อมต่อระบบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง
+          </div>`;
+        return;
+      }
+
+      if (matched.length === 0) {
+        area.innerHTML = `
+          <div class="bg-white p-6 rounded-2xl border border-slate-200">
+            <div class="text-center">
+              <span class="text-4xl">🔎</span>
+              <h3 class="text-lg font-bold text-slate-700 mt-2">ไม่พบพัสดุของ "${escapeHtml(query)}"</h3>
+            </div>
+            <ul class="mt-4 space-y-2 text-sm text-slate-600 max-w-md mx-auto">
+              <li>• ตรวจสอบว่าพิมพ์เลข Tracking ครบทุกตัวและไม่มีช่องว่าง</li>
+              <li>• ลองค้นด้วยรหัสนักศึกษา/บุคลากรแทนเลข Tracking (ระบบไม่ค้นด้วยชื่อ)</li>
+              <li>• ถ้าขนส่งแจ้งว่าส่งถึงแล้ว พัสดุอาจยังไม่ถูกลงทะเบียนรับเข้า ลองค้นอีกครั้งในวันทำการถัดไป หรือสอบถามที่ศูนย์รับพัสดุกลาง (R2)</li>
+            </ul>
+          </div>
+        `;
+        return;
+      }
+
+      // พัสดุที่ยังไม่ส่งสำเร็จขึ้นก่อน
+      matched.sort((a, b) => Number(isDelivered(a)) - Number(isDelivered(b)));
+      area.innerHTML = matched.map(pkg => renderParcelCard(pkg)).join('');
+    }
+
+    // ================= Timeline สถานะพัสดุ (3 ขั้น) =================
+    function buildTimeline(pkg) {
+      const order = ['ARRIVED_AT_RMU', 'IN_TRANSIT', 'DELIVERED'];
+      const code = getStatusCode(pkg);
+      const currentIdx = order.indexOf(code);
+
+      const steps = [
+        {
+          title: 'รับเข้าแล้ว',
+          desc: `${pkg.carrier || 'ขนส่ง'} ส่งถึงศูนย์รับพัสดุกลาง มรภ.`,
+          time: getArrivedAt(pkg)
+        },
+        {
+          title: 'กำลังจัดส่ง',
+          desc: `นำส่งไปยัง ${pkg.storage_location || '-'}`,
+          time: getDispatchedAt(pkg)
+        },
+        {
+          title: 'ส่งสำเร็จ',
+          desc: code === 'DELIVERED' ? 'ผู้รับรับพัสดุเรียบร้อย' : 'รอผู้รับมารับที่จุดรับ',
+          time: getDeliveredAt(pkg)
+        }
+      ];
+
+      const items = steps.map((s, i) => {
+        const done = i <= currentIdx;
+        const isCurrent = i === currentIdx && code !== 'DELIVERED';
+        const isLast = i === steps.length - 1;
+        return `
+          <li class="flex gap-3">
+            <div class="flex flex-col items-center">
+              <span class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold
+                ${done ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-400'}
+                ${isCurrent ? 'ring-4 ring-amber-200' : ''}">
+                ${done ? '✓' : i + 1}
+              </span>
+              ${!isLast ? `<span class="w-0.5 flex-1 min-h-[20px] ${i < currentIdx ? 'bg-amber-600' : 'bg-slate-200'}"></span>` : ''}
+            </div>
+            <div class="${isLast ? '' : 'pb-4'}">
+              <p class="text-sm font-semibold ${done ? 'text-slate-800' : 'text-slate-400'}">${s.title}</p>
+              <p class="text-xs ${done ? 'text-slate-500' : 'text-slate-400'}">${escapeHtml(s.desc)}</p>
+              ${s.time ? `<p class="text-[11px] text-amber-700 mt-0.5">🕒 ${formatDateTime(s.time)}</p>` : ''}
+            </div>
+          </li>
+        `;
+      }).join('');
+
+      let waitingBanner = '';
+      const days = daysSince(getArrivedAt(pkg));
+      if (code !== 'DELIVERED' && days !== null) {
+        if (days >= OVERDUE_DAYS) {
+          waitingBanner = `<div class="mt-3 text-xs font-medium text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">⚠️ พัสดุรอรับมาแล้ว ${days} วัน กรุณามารับโดยเร็ว</div>`;
+        } else {
+          waitingBanner = `<div class="mt-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg">⏳ ${days === 0 ? 'พัสดุเข้ามาวันนี้' : `รอรับมาแล้ว ${days} วัน`}</div>`;
+        }
+      }
+
+      return `<ol>${items}</ol>${waitingBanner}`;
+    }
+
+    // ================= การ์ดจุดรับพัสดุ =================
+    function buildLocationCard(pkg) {
+      const location = pkg.storage_location || '-';
+      const info = getLocationInfo(location);
+      const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('มหาวิทยาลัยราชภัฏมหาสารคาม ' + location)}`;
+
+      return `
+        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2.5 h-full">
+          <h4 class="text-sm font-bold text-slate-800">📍 ไปรับพัสดุที่ไหน</h4>
+          <p class="text-sm font-semibold text-amber-800">${escapeHtml(location)}</p>
+          <p class="text-xs text-slate-600">🕒 ${escapeHtml(info.hours)}</p>
+          <p class="text-xs text-slate-600">💡 ${escapeHtml(info.note)}</p>
+          <a href="${mapsUrl}" target="_blank" rel="noopener"
+            class="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-slate-700 hover:bg-slate-800 px-3 py-1.5 rounded-lg transition">
+            🧭 เปิดใน Google Maps
+          </a>
+        </div>
+      `;
+    }
+
+    function renderParcelCard(pkg) {
+      const shippingCode = getStatusCode(pkg);
+      const statusInfo = STATUS_MAP[shippingCode];
+      const safeId = escapeHtml(pkg.id);
+
+      return `
+        <div class="bg-white p-6 rounded-2xl shadow-sm border ${isOverdue(pkg) ? 'border-red-300' : 'border-slate-200'} space-y-5">
+          <div class="flex flex-wrap justify-between items-start gap-2 pb-4 border-b">
+            <div>
+              <span class="text-xs font-semibold px-2.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                ${escapeHtml(pkg.carrier || 'ขนส่งเอกชน')}
+              </span>
+              <h3 class="text-xl font-bold text-slate-800 mt-1">${escapeHtml(pkg.tracking_number)}</h3>
+              <p class="text-xs text-slate-500">ผู้รับ: <span class="font-medium text-slate-700">${escapeHtml(pkg.recipient_name)}</span> (${escapeHtml(pkg.student_id)})</p>
+            </div>
+
+            <div class="text-right">
+              <span class="inline-block px-3 py-1 rounded-full text-xs font-semibold border ${statusInfo.color}">
+                ${statusInfo.label}
+              </span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <h4 class="text-sm font-bold text-slate-800 mb-3">📋 สถานะพัสดุ</h4>
+              ${buildTimeline(pkg)}
+            </div>
+            ${buildLocationCard(pkg)}
+          </div>
+
+          ${shippingCode !== 'DELIVERED' ? `
+            <!-- ต้องยืนยันว่าเป็นเจ้าของก่อน ถึงจะเห็น PIN / QR -->
+            <div id="pickup_${safeId}" class="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3">
+              <div>
+                <p class="text-sm font-bold text-amber-900">🔑 แสดง PIN / QR Code สำหรับรับพัสดุ</p>
+                <p class="text-[11px] text-slate-600">กรอกเลข Tracking และรหัสนักศึกษา/บุคลากรแบบเต็ม เพื่อยืนยันว่าเป็นเจ้าของพัสดุ</p>
+              </div>
+              <form onsubmit="event.preventDefault(); revealPickupCode('${safeId}');" class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input id="verifyTracking_${safeId}" required placeholder="เลข Tracking" autocomplete="off"
+                  class="px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                <input id="verifyStudent_${safeId}" required placeholder="รหัสนักศึกษา/บุคลากร" autocomplete="off"
+                  class="px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                <button type="submit" class="bg-amber-700 hover:bg-amber-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                  แสดง PIN
+                </button>
+              </form>
+              <p id="revealError_${safeId}" class="text-xs text-red-600 font-medium hidden"></p>
+            </div>
+          ` : `
+            <div class="bg-green-50 p-4 rounded-xl border border-green-200 text-sm text-green-800 font-medium text-center">
+              ✅ พัสดุชิ้นนี้ส่งสำเร็จแล้ว${getDeliveredAt(pkg) ? ` เมื่อ ${formatDateTime(getDeliveredAt(pkg))}` : ''}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    // ขอ PIN จาก server เมื่อกรอกเลข Tracking + รหัสนักศึกษาถูกต้อง แล้วสร้าง QR ในเครื่อง
+    async function revealPickupCode(pkgId) {
+      const tracking = normalizeCode(document.getElementById(`verifyTracking_${pkgId}`).value);
+      const studentId = normalizeCode(document.getElementById(`verifyStudent_${pkgId}`).value);
+      const errorEl = document.getElementById(`revealError_${pkgId}`);
+      errorEl.classList.add('hidden');
+
+      let result;
+      try {
+        const res = await fetch(`${BACKEND_API}/packages/pickup-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ package_id: pkgId, tracking_number: tracking, student_id: studentId })
+        });
+        result = await res.json();
+      } catch (err) {
+        setServerStatus(false);
+        result = { success: false, message: 'ไม่สามารถเชื่อมต่อระบบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง' };
+      }
+
+      if (!result.success) {
+        errorEl.innerText = result.message || 'ไม่สามารถแสดง PIN ได้';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      const box = document.getElementById(`pickup_${pkgId}`);
+      box.innerHTML = `
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div class="text-center sm:text-left space-y-1">
+            <p class="text-sm text-slate-700">รหัส PIN รับพัสดุ: <b class="text-amber-900 text-2xl font-bold tracking-widest">${escapeHtml(result.data.pickup_pin)}</b></p>
+            <p class="text-[11px] text-slate-500">แสดง PIN หรือ QR Code นี้ให้เจ้าหน้าที่ ณ จุดรับพัสดุ และอย่าส่งต่อให้ผู้อื่น</p>
+          </div>
+          <div class="bg-white p-2 rounded-xl border border-amber-200 shadow-sm flex flex-col items-center">
+            <div id="qr_${pkgId}"></div>
+            <span class="text-[10px] text-amber-800 font-bold mt-1">สแกนเพื่อรับของ</span>
+          </div>
+        </div>
+      `;
+
+      new QRCode(document.getElementById(`qr_${pkgId}`), {
+        text: JSON.stringify({ id: result.data.id, pin: result.data.pickup_pin }),
+        width: 112,
+        height: 112
+      });
+    }
+
+    // ================= แดชบอร์ด + ตัวกรอง =================
+    function renderDashboard() {
+      refreshLocationFilterOptions(allPackagesList);
+      applyFilters();
+    }
+
+    function renderStats(list) {
+      const stats = [
+        { key: 'TODAY',          icon: '📥', label: 'รับเข้าวันนี้',          count: list.filter(p => isToday(getArrivedAt(p))).length, style: 'bg-white border-slate-200 text-slate-800' },
+        { key: 'ARRIVED_AT_RMU', icon: '📦', label: 'รับเข้าแล้ว รอจัดส่ง',   count: list.filter(p => getStatusCode(p) === 'ARRIVED_AT_RMU').length, style: 'bg-amber-50 border-amber-200 text-amber-900' },
+        { key: 'IN_TRANSIT',     icon: '🚚', label: 'กำลังจัดส่ง',           count: list.filter(p => getStatusCode(p) === 'IN_TRANSIT').length, style: 'bg-blue-50 border-blue-200 text-blue-800' },
+        { key: 'DELIVERED',      icon: '✅', label: 'ส่งสำเร็จ',             count: list.filter(p => isDelivered(p)).length, style: 'bg-green-50 border-green-200 text-green-800' },
+        { key: 'OVERDUE',        icon: '⚠️', label: `ค้างเกิน ${OVERDUE_DAYS} วัน`, count: list.filter(p => isOverdue(p)).length, style: 'bg-red-50 border-red-200 text-red-700' }
+      ];
+      const activeKey = document.getElementById('statusFilter').value;
+
+      document.getElementById('statsCards').innerHTML = stats.map(s => `
+        <button onclick="setStatusFilter('${s.key}')"
+          class="stat-card ${activeKey === s.key ? 'is-active' : ''} text-left p-4 rounded-2xl border shadow-sm hover:shadow transition ${s.style}">
+          <div class="text-xs font-medium opacity-80">${s.icon} ${s.label}</div>
+          <div class="text-3xl font-bold mt-1">${s.count}</div>
+        </button>
+      `).join('');
+    }
+
+    function setStatusFilter(key) {
+      const select = document.getElementById('statusFilter');
+      select.value = select.value === key ? 'ALL' : key;
+      applyFilters();
+    }
+
+    function refreshLocationFilterOptions(list) {
+      const select = document.getElementById('locationFilter');
+      const current = select.value;
+      const locations = [...new Set(list.map(p => p.storage_location).filter(Boolean))].sort();
+      select.innerHTML = `<option value="ALL">ทุกจุดรับ</option>` +
+        locations.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+      select.value = locations.includes(current) ? current : 'ALL';
+    }
+
+    function applyFilters() {
+      const text = document.getElementById('tableSearch').value.trim().toLowerCase();
+      const status = document.getElementById('statusFilter').value;
+      const location = document.getElementById('locationFilter').value;
+
+      const filtered = allPackagesList.filter(p => {
+        if (text) {
+          const haystack = [p.tracking_number, p.recipient_name, p.student_id].join(' ').toLowerCase();
+          if (!haystack.includes(text)) return false;
+        }
+        if (location !== 'ALL' && p.storage_location !== location) return false;
+        if (status === 'TODAY' && !isToday(getArrivedAt(p))) return false;
+        if (status === 'ARRIVED_AT_RMU' && getStatusCode(p) !== 'ARRIVED_AT_RMU') return false;
+        if (status === 'IN_TRANSIT' && getStatusCode(p) !== 'IN_TRANSIT') return false;
+        if (status === 'WAITING' && isDelivered(p)) return false;
+        if (status === 'DELIVERED' && !isDelivered(p)) return false;
+        if (status === 'OVERDUE' && !isOverdue(p)) return false;
+        return true;
+      });
+
+      // ค้างนาน > รอจัดส่ง > กำลังจัดส่ง > ส่งสำเร็จ, ภายในกลุ่มใหม่สุดก่อน
+      const rank = p => isOverdue(p) ? 0 : ({ ARRIVED_AT_RMU: 1, IN_TRANSIT: 2, DELIVERED: 3 }[getStatusCode(p)]);
+      filtered.sort((a, b) => {
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        return (getArrivedAt(b)?.getTime() || 0) - (getArrivedAt(a)?.getTime() || 0);
+      });
+
+      document.getElementById('tableCountText').innerText =
+        `แสดง ${filtered.length} จาก ${allPackagesList.length} รายการ`;
+
+      renderStats(allPackagesList);
+      renderTable(filtered);
+    }
+
+    function renderTable(list) {
+      const tbody = document.getElementById('packageTableBody');
+      if (!list || list.length === 0) {
+        const emptyText = allPackagesList.length === 0 ? 'ยังไม่มีรายการพัสดุ' : 'ไม่พบรายการที่ตรงกับตัวกรอง';
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center p-6 text-slate-400">${emptyText}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.map(item => {
+        const shippingCode = getStatusCode(item);
+        const statusInfo = STATUS_MAP[shippingCode];
+        const arrivedAt = getArrivedAt(item);
+        const days = daysSince(arrivedAt);
+        const overdue = isOverdue(item);
+        const safeId = escapeHtml(item.id);
+
+        let waitText = '';
+        if (shippingCode !== 'DELIVERED' && days !== null) {
+          waitText = overdue
+            ? `<span class="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold text-[10px]">⚠️ ค้าง ${days} วัน</span>`
+            : `<div class="text-[11px] text-slate-500">${days === 0 ? 'วันนี้' : `รอ ${days} วัน`}</div>`;
+        }
+
+        let actions = '<span class="text-green-600 font-medium text-xs">✅ ส่งสำเร็จ</span>';
+        if (shippingCode === 'ARRIVED_AT_RMU') {
+          actions = `
+            <div class="flex flex-wrap items-center justify-center gap-1.5">
+              <button onclick="dispatchPackage('${safeId}')" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-sm transition">
+                🚚 จัดส่งไปจุดรับ
+              </button>
+              <button onclick="openPinModal('${safeId}')" class="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-sm transition">
+                🔑 กรอก PIN
+              </button>
+            </div>`;
+        } else if (shippingCode === 'IN_TRANSIT') {
+          actions = `
+            <button onclick="openPinModal('${safeId}')" class="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-sm transition">
+              🔑 กรอก PIN
+            </button>`;
+        }
+
+        const tools = [`<button onclick="openHistory('${safeId}')" class="row-tool">📜 ประวัติ</button>`];
+        if (shippingCode !== 'DELIVERED') {
+          tools.push(`<button onclick="openEditModal('${safeId}')" class="row-tool">✏️ แก้ไข</button>`);
+          tools.push(`<button onclick="openCancelModal('${safeId}')" class="row-tool">🗑️ ยกเลิก</button>`);
+        }
+        const toolsHtml = `<div class="flex flex-wrap justify-center gap-x-3 gap-y-1 mt-1.5 text-[11px]">${tools.join('')}</div>`;
+
+        return `
+          <tr class="${overdue ? 'bg-red-50/70 hover:bg-red-50' : 'hover:bg-slate-50'} transition-colors">
+            <td class="p-3">
+              <div class="font-bold text-slate-800">${escapeHtml(item.tracking_number)}</div>
+              <div class="text-[11px] text-slate-500">${escapeHtml(item.carrier)}</div>
+            </td>
+            <td class="p-3">
+              <div class="font-medium text-slate-800">${escapeHtml(item.recipient_name)}</div>
+              <div class="text-[11px] text-slate-500">${escapeHtml(item.student_id)}</div>
+            </td>
+            <td class="p-3 text-amber-900 font-medium">${escapeHtml(item.storage_location)}</td>
+            <td class="p-3 whitespace-nowrap">
+              <div class="text-slate-700">${formatDateTime(arrivedAt)}</div>
+              ${waitText}
+            </td>
+            <td class="p-3">
+              <span class="px-2.5 py-1 text-[11px] rounded-full border ${statusInfo.color} font-medium inline-block whitespace-nowrap">
+                ${statusInfo.label}
+              </span>
+            </td>
+            <td class="p-3 text-center">${actions}${toolsHtml}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // ================= อัปเดตสถานะ: กำลังจัดส่ง =================
+    async function dispatchPackage(packageId) {
+      const pkg = allPackagesList.find(p => String(p.id) === String(packageId));
+      if (!confirm(`ยืนยันจัดส่งพัสดุ ${pkg ? pkg.tracking_number : ''} ไปยัง\n${pkg ? pkg.storage_location : 'จุดรับ'} ?`)) return;
+
+      try {
+        const res = await fetch(`${BACKEND_API}/packages/${encodeURIComponent(packageId)}/dispatch`, {
+          method: 'POST',
+          headers: authHeaders()
+        });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        const json = await res.json();
+        if (!json.success) {
+          alert(json.message || '❌ อัปเดตสถานะไม่สำเร็จ');
+        }
+        await fetchPackages();
+      } catch (err) {
+        serverDownAlert(' สถานะยังไม่ถูกอัปเดต');
+      }
+    }
+
+    // ================= Camera QR Code Scanner =================
+    function openQrScannerModal() {
+      document.getElementById('qrScanModal').classList.remove('hidden');
+
+      if (!html5QrScanner) {
+        html5QrScanner = new Html5QrcodeScanner("qr-reader", {
+          fps: 10,
+          qrbox: { width: 220, height: 220 },
+          aspectRatio: 1.0
+        }, false);
+
+        html5QrScanner.render(onScanSuccess, onScanFailure);
+      }
+    }
+
+    function closeQrScannerModal() {
+      if (html5QrScanner) {
+        html5QrScanner.clear().catch(err => console.error(err));
+        html5QrScanner = null;
+      }
+      document.getElementById('qrScanModal').classList.add('hidden');
+    }
+
+    async function onScanSuccess(decodedText) {
+      try {
+        const scannedData = JSON.parse(decodedText);
+        if (scannedData.id && scannedData.pin) {
+          closeQrScannerModal();
+          await sendVerifyPinApi(scannedData.id, scannedData.pin);
+        } else {
+          alert("❌ รูปแบบ QR Code ไม่ถูกต้อง");
+        }
+      } catch (err) {
+        alert(`❌ โค้ดที่สแกนได้ไม่ใช่ QR Code พัสดุ: ${decodedText}`);
+      }
+    }
+
+    function onScanFailure(error) {}
+
+    // ================= PIN Verification =================
+    function openPinModal(packageId) {
+      currentSelectedPackageId = packageId;
+      document.getElementById('inputPinCode').value = '';
+      document.getElementById('pinErrorMessage').classList.add('hidden');
+      document.getElementById('pinModal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('inputPinCode').focus(), 100);
+    }
+
+    function closePinModal() {
+      document.getElementById('pinModal').classList.add('hidden');
+    }
+
+    async function submitVerifyPin() {
+      const inputPin = document.getElementById('inputPinCode').value.trim();
+      const errorDiv = document.getElementById('pinErrorMessage');
+
+      if (inputPin.length !== 4) {
+        errorDiv.innerText = 'กรุณากรอกรหัส PIN ให้ครบ 4 หลัก';
+        errorDiv.classList.remove('hidden');
+        return;
+      }
+
+      await sendVerifyPinApi(currentSelectedPackageId, inputPin);
+    }
+
+    async function sendVerifyPinApi(packageId, pin) {
+      try {
+        const response = await fetch(`${BACKEND_API}/packages/verify-pin`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ package_id: packageId, pin: pin })
+        });
+
+        if (response.status === 401) { closePinModal(); handleUnauthorized(); return; }
+        const result = await response.json();
+
+        if (result.success) {
+          alert("🎉 ✅ ยืนยันการรับพัสดุเรียบร้อยแล้ว!");
+          closePinModal();
+          fetchPackages();
+        } else {
+          alert(result.message || '❌ รหัส PIN / QR Code ไม่ถูกต้อง!');
+        }
+      } catch (err) {
+        serverDownAlert(' การรับพัสดุยังไม่ถูกบันทึก');
+      }
+    }
+
+    // ================= รายงานสรุปและสถิติ =================
+    function setReportPreset(preset) {
+      const today = new Date();
+      let from;
+      if (preset === 'month') {
+        from = new Date(today.getFullYear(), today.getMonth(), 1);
+      } else {
+        from = new Date(today);
+        from.setDate(today.getDate() - (preset - 1));
+      }
+      document.getElementById('reportFrom').value = toDateInputValue(from);
+      document.getElementById('reportTo').value = toDateInputValue(today);
+      loadReport();
+    }
+
+    function showReportMessage(text, isError = true) {
+      const el = document.getElementById('reportMessage');
+      if (!text) { el.classList.add('hidden'); return; }
+      el.innerText = text;
+      el.className = `text-xs font-medium p-3 rounded-lg ${isError ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-slate-50 text-slate-600 border border-slate-200'}`;
+    }
+
+    function reportQueryString() {
+      const from = document.getElementById('reportFrom').value;
+      const to = document.getElementById('reportTo').value;
+      return `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    }
+
+    async function loadReport() {
+      if (!authToken) {
+        showReportMessage('รายงานต้องเชื่อมต่อ server กรุณาเปิด server แล้วเข้าสู่ระบบใหม่');
+        return;
+      }
+      showReportMessage('กำลังโหลดรายงาน...', false);
+
+      try {
+        const res = await fetch(`${BACKEND_API}/reports?${reportQueryString()}`, { headers: authHeaders() });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        const json = await res.json();
+        if (!json.success) {
+          showReportMessage(json.message || 'โหลดรายงานไม่สำเร็จ');
+          return;
+        }
+        showReportMessage(json.summary.total === 0 ? 'ไม่มีพัสดุที่รับเข้าในช่วงเวลานี้' : '', false);
+        renderReportSummary(json.summary);
+        renderReportCharts(json);
+        renderLocationTable(json.by_location);
+      } catch (err) {
+        showReportMessage('ไม่สามารถเชื่อมต่อ server ได้');
+      }
+    }
+
+    function renderReportSummary(s) {
+      const cards = [
+        { label: 'พัสดุรับเข้าทั้งหมด', value: s.total, style: 'bg-white border-slate-200 text-slate-800' },
+        { label: 'ส่งสำเร็จ', value: s.delivered, style: 'bg-green-50 border-green-200 text-green-800' },
+        { label: 'ยังไม่ส่งสำเร็จ', value: s.waiting, style: 'bg-amber-50 border-amber-200 text-amber-900' },
+        { label: `ค้างเกิน ${OVERDUE_DAYS} วัน (ปัจจุบัน)`, value: s.overdue_now, style: 'bg-red-50 border-red-200 text-red-700' },
+        { label: 'เวลารอรับเฉลี่ย', value: formatHours(s.avg_wait_hours), style: 'bg-blue-50 border-blue-200 text-blue-800' }
+      ];
+      document.getElementById('reportSummary').innerHTML = cards.map(c => `
+        <div class="p-4 rounded-2xl border shadow-sm ${c.style}">
+          <div class="text-xs font-medium opacity-80">${c.label}</div>
+          <div class="text-2xl md:text-3xl font-bold mt-1">${c.value}</div>
+        </div>
+      `).join('');
+    }
+
+    function drawChart(id, config) {
+      if (typeof Chart === 'undefined') {
+        showReportMessage('โหลดไลบรารีกราฟไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+        return;
+      }
+      if (reportCharts[id]) reportCharts[id].destroy();
+      reportCharts[id] = new Chart(document.getElementById(id), config);
+    }
+
+    function renderReportCharts(data) {
+      if (typeof Chart !== 'undefined') {
+        Chart.defaults.font.family = "'Kanit', sans-serif";
+      }
+      const palette = ['#d97706', '#2563eb', '#16a34a', '#dc2626', '#7c3aed', '#0891b2', '#64748b', '#db2777'];
+
+      const dayLabels = data.daily.map(d => {
+        const [y, m, day] = d.date.split('-').map(Number);
+        return new Date(y, m - 1, day).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+      });
+
+      drawChart('chartDaily', {
+        type: 'line',
+        data: {
+          labels: dayLabels,
+          datasets: [
+            { label: 'รับเข้า', data: data.daily.map(d => d.received), borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.15)', fill: true, tension: 0.3 },
+            { label: 'ส่งสำเร็จ', data: data.daily.map(d => d.delivered), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.1)', fill: true, tension: 0.3 }
+          ]
+        },
+        options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+
+      drawChart('chartHour', {
+        type: 'bar',
+        data: {
+          labels: data.by_hour.map((_, h) => `${String(h).padStart(2, '0')}:00`),
+          datasets: [{ label: 'จำนวนพัสดุรับเข้า', data: data.by_hour, backgroundColor: '#d97706' }]
+        },
+        options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+
+      drawChart('chartCarrier', {
+        type: 'doughnut',
+        data: {
+          labels: data.by_carrier.map(c => c.carrier),
+          datasets: [{ data: data.by_carrier.map(c => c.total), backgroundColor: palette }]
+        },
+        options: { maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+      });
+
+      drawChart('chartLocation', {
+        type: 'bar',
+        data: {
+          labels: data.by_location.map(l => l.location),
+          datasets: [
+            { label: 'ส่งสำเร็จ', data: data.by_location.map(l => l.delivered), backgroundColor: '#16a34a' },
+            { label: 'ยังไม่ส่งสำเร็จ', data: data.by_location.map(l => l.waiting), backgroundColor: '#d97706' }
+          ]
+        },
+        options: {
+          indexAxis: 'y',
+          maintainAspectRatio: false,
+          scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } }
+        }
+      });
+    }
+
+    function renderLocationTable(rows) {
+      const tbody = document.getElementById('reportLocationTable');
+      if (!rows || rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center p-6 text-slate-400">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr class="hover:bg-slate-50">
+          <td class="p-3 text-amber-900 font-medium">${escapeHtml(r.location)}</td>
+          <td class="p-3 text-right font-semibold">${r.total}</td>
+          <td class="p-3 text-right">${r.waiting}</td>
+          <td class="p-3 text-right">${r.delivered}</td>
+          <td class="p-3 text-right">${formatHours(r.avg_wait_hours)}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function exportReportCsv() {
+      if (!authToken) {
+        showReportMessage('Export ต้องเชื่อมต่อ server กรุณาเปิด server แล้วเข้าสู่ระบบใหม่');
+        return;
+      }
+      if (!document.getElementById('reportFrom').value) setReportPreset(30);
+
+      try {
+        const res = await fetch(`${BACKEND_API}/reports/export?${reportQueryString()}`, { headers: authHeaders() });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          showReportMessage(json.message || 'Export ไม่สำเร็จ');
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `rmu-parcel-report_${document.getElementById('reportFrom').value}_${document.getElementById('reportTo').value}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showReportMessage('ไม่สามารถเชื่อมต่อ server ได้');
+      }
+    }
+
+    // ================= Modal ใช้ร่วมกัน =================
+    const INPUT_CLS = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white';
+    const BTN_SECONDARY = 'px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl';
+    const btnPrimary = (color) => `px-4 py-2 ${color} text-white text-xs font-medium rounded-xl shadow-sm transition`;
+
+    function openGenericModal(title, bodyHtml, actionsHtml) {
+      document.getElementById('genericModalTitle').innerText = title;
+      document.getElementById('genericModalBody').innerHTML = bodyHtml;
+      document.getElementById('genericModalActions').innerHTML = actionsHtml;
+      document.getElementById('genericModalError').classList.add('hidden');
+      document.getElementById('genericModal').classList.remove('hidden');
+    }
+    function closeGenericModal() {
+      document.getElementById('genericModal').classList.add('hidden');
+    }
+    function showModalError(message) {
+      const el = document.getElementById('genericModalError');
+      el.innerText = message;
+      el.classList.remove('hidden');
+    }
+    function findPkg(id) {
+      return allPackagesList.find(p => String(p.id) === String(id));
+    }
+    function setSelectValue(select, value) {
+      if (![...select.options].some(o => o.value === value)) {
+        select.add(new Option(value, value));
+      }
+      select.value = value;
+    }
+    function pkgSummary(p, showStudentId = true) {
+      return `
+        <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-0.5">
+          <div class="font-bold text-slate-800 text-sm">${escapeHtml(p.tracking_number)} <span class="font-normal text-slate-500">· ${escapeHtml(p.carrier)}</span></div>
+          <div>ผู้รับ: ${escapeHtml(p.recipient_name)}${showStudentId ? ` (${escapeHtml(p.student_id)})` : ''}</div>
+          <div>จุดรับ: ${escapeHtml(p.storage_location)}</div>
+        </div>`;
+    }
+
+    // เรียก API ของเจ้าหน้าที่ (คืนค่า null ถ้าหมดเวลาเข้าสู่ระบบ)
+    async function staffApi(path, method = 'GET', body = null) {
+      try {
+        const res = await fetch(`${BACKEND_API}${path}`, {
+          method,
+          headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
+          body: body ? JSON.stringify(body) : undefined
+        });
+        if (res.status === 401) { closeGenericModal(); handleUnauthorized(); return null; }
+        setServerStatus(true);
+        return await res.json();
+      } catch (err) {
+        setServerStatus(false);
+        return { success: false, message: '❌ ไม่สามารถเชื่อมต่อ Server ได้ กรุณาเปิดระบบด้วยไฟล์ start.bat' };
+      }
+    }
+
+    // ================= ประวัติพัสดุ =================
+    async function openHistory(id) {
+      openGenericModal('📜 ประวัติพัสดุ', '<p class="text-slate-500">กำลังโหลด...</p>',
+        `<button onclick="closeGenericModal()" class="${BTN_SECONDARY}">ปิด</button>`);
+      const json = await staffApi(`/packages/${encodeURIComponent(id)}/history`);
+      if (!json) return;
+      if (!json.success) { document.getElementById('genericModalBody').innerHTML = ''; showModalError(json.message); return; }
+
+      const dot = { ARRIVED_AT_RMU: 'bg-amber-500', IN_TRANSIT: 'bg-blue-500', DELIVERED: 'bg-green-600', EDITED: 'bg-slate-500', CANCELLED: 'bg-red-600' };
+      const items = json.data.logs.map(l => `
+        <li class="flex gap-3">
+          <span class="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${dot[l.status] || 'bg-slate-400'}"></span>
+          <div>
+            <p class="font-semibold text-slate-800">${escapeHtml(l.label)}
+              <span class="font-normal text-[11px] text-slate-500">· ${formatDateTime(parseDate(l.changed_at))}</span></p>
+            <p class="text-xs text-slate-600">โดย ${escapeHtml(l.by)}</p>
+            ${l.note ? `<p class="text-xs text-slate-500">${escapeHtml(l.note)}</p>` : ''}
+          </div>
+        </li>`).join('');
+      document.getElementById('genericModalBody').innerHTML =
+        pkgSummary(json.data.package) +
+        `<ol class="space-y-3 pt-1">${items || '<li class="text-slate-400">ยังไม่มีประวัติ</li>'}</ol>`;
+    }
+
+    // ================= แก้ไขข้อมูลพัสดุ =================
+    function openEditModal(id) {
+      const p = findPkg(id);
+      if (!p) return;
+      const carrierOptions = document.getElementById('carrier').innerHTML;
+      const locationOptions = document.getElementById('storage_location').innerHTML;
+      openGenericModal('✏️ แก้ไขข้อมูลพัสดุ', `
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">เลข Tracking</label>
+          <input id="edit_tracking_number" class="${INPUT_CLS}"></div>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">บริษัทขนส่ง</label>
+          <select id="edit_carrier" class="${INPUT_CLS}">${carrierOptions}</select></div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-xs font-medium text-slate-700 mb-1">รหัสนักศึกษา / บุคลากร</label>
+            <input id="edit_student_id" class="${INPUT_CLS}"></div>
+          <div><label class="block text-xs font-medium text-slate-700 mb-1">ชื่อ-นามสกุล ผู้รับ</label>
+            <input id="edit_recipient_name" class="${INPUT_CLS}"></div>
+        </div>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">จุดรับพัสดุ</label>
+          <select id="edit_storage_location" class="${INPUT_CLS}">${locationOptions}</select></div>
+        <p class="text-[11px] text-slate-500">ระบบจะบันทึกค่าเดิมและค่าใหม่ไว้ในประวัติพัสดุทุกครั้ง</p>`,
+        `<button onclick="closeGenericModal()" class="${BTN_SECONDARY}">ยกเลิก</button>
+         <button onclick="submitEdit('${escapeHtml(id)}')" class="${btnPrimary('bg-amber-700 hover:bg-amber-800')}">บันทึกการแก้ไข</button>`);
+
+      document.getElementById('edit_tracking_number').value = p.tracking_number;
+      document.getElementById('edit_student_id').value = p.student_id;
+      document.getElementById('edit_recipient_name').value = p.recipient_name;
+      setSelectValue(document.getElementById('edit_carrier'), p.carrier);
+      setSelectValue(document.getElementById('edit_storage_location'), p.storage_location);
+    }
+
+    async function submitEdit(id) {
+      const data = {};
+      ['tracking_number', 'carrier', 'student_id', 'recipient_name', 'storage_location'].forEach(f => {
+        data[f] = document.getElementById(`edit_${f}`).value.trim();
+      });
+      const json = await staffApi(`/packages/${encodeURIComponent(id)}`, 'PUT', data);
+      if (!json) return;
+      if (!json.success) { showModalError(json.message); return; }
+      closeGenericModal();
+      alert(json.message);
+      fetchPackages();
+    }
+
+    // ================= ยกเลิกรายการ =================
+    function openCancelModal(id) {
+      const p = findPkg(id);
+      if (!p) return;
+      openGenericModal('🗑️ ยกเลิกรายการพัสดุ', `
+        ${pkgSummary(p)}
+        <p class="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5">
+          รายการนี้จะหายไปจากหน้าค้นหา แดชบอร์ด และรายงาน แต่ยังเก็บไว้ในฐานข้อมูลพร้อมเหตุผลเพื่อตรวจสอบย้อนหลัง
+        </p>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">เหตุผลที่ยกเลิก <span class="text-red-500">*</span></label>
+          <textarea id="cancel_reason" rows="2" class="${INPUT_CLS}" placeholder="เช่น ลงทะเบียนซ้ำ, ขนส่งรับพัสดุคืน, ไม่ใช่ผู้รับในมหาวิทยาลัย"></textarea></div>`,
+        `<button onclick="closeGenericModal()" class="${BTN_SECONDARY}">ปิด</button>
+         <button onclick="submitCancel('${escapeHtml(id)}')" class="${btnPrimary('bg-red-600 hover:bg-red-700')}">ยืนยันยกเลิกรายการ</button>`);
+    }
+
+    async function submitCancel(id) {
+      const reason = document.getElementById('cancel_reason').value.trim();
+      if (!reason) { showModalError('กรุณาระบุเหตุผลที่ยกเลิก'); return; }
+      const json = await staffApi(`/packages/${encodeURIComponent(id)}/cancel`, 'POST', { reason });
+      if (!json) return;
+      if (!json.success) { showModalError(json.message); return; }
+      closeGenericModal();
+      alert(json.message);
+      fetchPackages();
+    }
+
+    // ================= ส่งมอบโดยตรวจบัตร (ไม่มี PIN) =================
+    function openManualDeliveryFromPin() {
+      closePinModal();
+      openManualDeliveryModal(currentSelectedPackageId);
+    }
+
+    function openManualDeliveryModal(id) {
+      const p = findPkg(id);
+      if (!p) return;
+      openGenericModal('🪪 ส่งมอบโดยตรวจบัตร', `
+        ${pkgSummary(p, false)}
+        <p class="text-xs text-slate-600">ขอดูบัตรนักศึกษาหรือบัตรประจำตัวบุคลากรของผู้รับ ตรวจรูปถ่ายและชื่อให้ตรงกับผู้รับ แล้วกรอกเลขบนบัตร ระบบจะตรวจว่าตรงกับรหัสผู้รับของพัสดุชิ้นนี้</p>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">เลขบัตรนักศึกษา / บุคลากร (จากบัตรที่ตรวจ) <span class="text-red-500">*</span></label>
+          <input id="manual_card" class="${INPUT_CLS}" autocomplete="off"></div>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">เหตุผลที่ไม่ใช้ PIN <span class="text-red-500">*</span></label>
+          <select id="manual_reason" class="${INPUT_CLS}">
+            <option>ผู้รับลืม PIN</option>
+            <option>โทรศัพท์ของผู้รับไม่พร้อมใช้งาน</option>
+            <option>สแกน QR Code ไม่ได้</option>
+            <option>อื่น ๆ</option>
+          </select></div>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">หมายเหตุเพิ่มเติม</label>
+          <input id="manual_note" class="${INPUT_CLS}" placeholder="ถ้ามี"></div>
+        <p class="text-[11px] text-slate-500">การส่งมอบแบบนี้จะถูกบันทึกในประวัติพร้อมชื่อเจ้าหน้าที่และเหตุผล</p>`,
+        `<button onclick="closeGenericModal()" class="${BTN_SECONDARY}">ยกเลิก</button>
+         <button onclick="submitManualDelivery('${escapeHtml(id)}')" class="${btnPrimary('bg-emerald-600 hover:bg-emerald-700')}">ยืนยันส่งมอบ</button>`);
+      setTimeout(() => document.getElementById('manual_card').focus(), 100);
+    }
+
+    async function submitManualDelivery(id) {
+      const card = document.getElementById('manual_card').value.trim();
+      const note = document.getElementById('manual_note').value.trim();
+      const reason = document.getElementById('manual_reason').value + (note ? ` (${note})` : '');
+      if (!card) { showModalError('กรุณากรอกเลขบัตรที่ตรวจสอบ'); return; }
+      const json = await staffApi(`/packages/${encodeURIComponent(id)}/deliver-manual`, 'POST', { id_card_number: card, reason });
+      if (!json) return;
+      if (!json.success) { showModalError(json.message); return; }
+      closeGenericModal();
+      alert(json.message);
+      fetchPackages();
+    }
+
+    // ================= พิมพ์ใบนำส่งพัสดุ =================
+    function openPrintModal() {
+      const pending = allPackagesList.filter(p => !isDelivered(p));
+      if (pending.length === 0) { alert('ไม่มีพัสดุที่ยังไม่ส่งสำเร็จ'); return; }
+      const counts = {};
+      pending.forEach(p => { counts[p.storage_location] = (counts[p.storage_location] || 0) + 1; });
+      const locOptions = Object.keys(counts).sort()
+        .map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)} (${counts[l]} ชิ้น)</option>`).join('');
+
+      openGenericModal('🖨️ พิมพ์ใบนำส่งพัสดุ', `
+        <p class="text-xs text-slate-600">ใบนำส่งใช้แนบไปกับพัสดุที่ส่งไปยังจุดรับ ให้ผู้รับลงลายมือชื่อเมื่อรับพัสดุ</p>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">จุดรับพัสดุ</label>
+          <select id="print_location" class="${INPUT_CLS}">
+            <option value="ALL">ทุกจุดรับ (แยกหน้าตามจุดรับ)</option>${locOptions}
+          </select></div>
+        <div><label class="block text-xs font-medium text-slate-700 mb-1">รายการที่จะพิมพ์</label>
+          <select id="print_scope" class="${INPUT_CLS}">
+            <option value="ARRIVED">เฉพาะพัสดุที่รอจัดส่ง (รับเข้าแล้ว)</option>
+            <option value="PENDING">พัสดุทั้งหมดที่ยังไม่ส่งสำเร็จ</option>
+          </select></div>
+        <label class="flex items-start gap-2 text-xs text-slate-700">
+          <input id="print_dispatch" type="checkbox" checked class="mt-0.5">
+          หลังพิมพ์ ให้ถามเพื่อเปลี่ยนสถานะพัสดุ "รับเข้าแล้ว" ในใบนี้เป็น "กำลังจัดส่ง"
+        </label>`,
+        `<button onclick="closeGenericModal()" class="${BTN_SECONDARY}">ยกเลิก</button>
+         <button onclick="printDispatchSheet()" class="${btnPrimary('bg-slate-700 hover:bg-slate-800')}">🖨️ พิมพ์</button>`);
+    }
+
+    async function printDispatchSheet() {
+      const loc = document.getElementById('print_location').value;
+      const scope = document.getElementById('print_scope').value;
+      const askDispatch = document.getElementById('print_dispatch').checked;
+
+      const items = allPackagesList.filter(p =>
+        !isDelivered(p) &&
+        (scope === 'PENDING' || getStatusCode(p) === 'ARRIVED_AT_RMU') &&
+        (loc === 'ALL' || p.storage_location === loc)
+      );
+      if (items.length === 0) { showModalError('ไม่มีพัสดุตามเงื่อนไขที่เลือก'); return; }
+
+      const groups = {};
+      items.forEach(p => { (groups[p.storage_location] = groups[p.storage_location] || []).push(p); });
+      const printedAt = new Date().toLocaleString('th-TH', { dateStyle: 'long', timeStyle: 'short' });
+
+      document.getElementById('printArea').innerHTML = Object.keys(groups).sort().map(location => {
+        const list = groups[location].sort((a, b) => (getArrivedAt(a)?.getTime() || 0) - (getArrivedAt(b)?.getTime() || 0));
+        const rows = list.map((p, i) => `
+          <tr>
+            <td style="text-align:center">${i + 1}</td>
+            <td>${escapeHtml(p.tracking_number)}<br><span style="font-size:9pt">${escapeHtml(p.carrier)}</span></td>
+            <td>${escapeHtml(p.recipient_name)}<br><span style="font-size:9pt">${escapeHtml(p.student_id)}</span></td>
+            <td style="white-space:nowrap">${formatDateTime(getArrivedAt(p))}</td>
+            <td style="width:28%"></td>
+          </tr>`).join('');
+        return `
+          <div class="print-page">
+            <div style="text-align:center">
+              <div style="font-size:16pt;font-weight:700">ใบนำส่งพัสดุภายในมหาวิทยาลัยราชภัฏมหาสารคาม</div>
+              <div style="font-size:10pt">RMU Parcel Tracking System</div>
+            </div>
+            <table style="width:100%;font-size:11pt;margin:12px 0 8px">
+              <tr><td><b>จุดรับพัสดุ:</b> ${escapeHtml(location)}</td><td style="text-align:right"><b>วันที่พิมพ์:</b> ${printedAt}</td></tr>
+              <tr><td><b>จำนวนพัสดุ:</b> ${list.length} ชิ้น</td><td style="text-align:right"><b>ผู้จัดทำ:</b> ${escapeHtml(currentUser ? currentUser.name : '')}</td></tr>
+            </table>
+            <table class="print-table">
+              <thead><tr><th style="width:6%">ลำดับ</th><th>เลข Tracking / ขนส่ง</th><th>ผู้รับ / รหัส</th><th>รับเข้าเมื่อ</th><th>ลายมือชื่อผู้รับพัสดุ</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+            <table style="width:100%;font-size:11pt;margin-top:36px;text-align:center">
+              <tr>
+                <td>ลงชื่อ ........................................ ผู้นำส่ง<br>(เจ้าหน้าที่ศูนย์รับพัสดุกลาง)<br>วันที่ ............/............/............</td>
+                <td>ลงชื่อ ........................................ ผู้รับปลายทาง<br>(เจ้าหน้าที่ประจำจุดรับพัสดุ)<br>วันที่ ............/............/............</td>
+              </tr>
+            </table>
+          </div>`;
+      }).join('');
+
+      closeGenericModal();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      window.print();
+
+      const toDispatch = items.filter(p => getStatusCode(p) === 'ARRIVED_AT_RMU');
+      if (askDispatch && toDispatch.length > 0 &&
+          confirm(`ต้องการเปลี่ยนสถานะพัสดุ ${toDispatch.length} ชิ้นในใบนำส่งนี้เป็น "กำลังจัดส่ง" หรือไม่?\n(กดยกเลิกถ้ายังไม่ได้นำพัสดุออกไปส่ง)`)) {
+        let ok = 0, fail = 0;
+        for (const p of toDispatch) {
+          const json = await staffApi(`/packages/${encodeURIComponent(p.id)}/dispatch`, 'POST');
+          if (!json) return;
+          json.success ? ok++ : fail++;
+        }
+        alert(`🚚 อัปเดตเป็นกำลังจัดส่งแล้ว ${ok} ชิ้น${fail ? ` (ไม่สำเร็จ ${fail} ชิ้น)` : ''}`);
+        fetchPackages();
+      }
+    }
+  </script>
+</body>
+</html>
